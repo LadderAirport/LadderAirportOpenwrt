@@ -1,7 +1,12 @@
 #!/bin/sh
 # Emit JSON snapshot of ladder-agent local status for LuCI.
 # Does not print raw control tokens.
-set -eu
+#
+# Do not enable nounset (-u). OpenWrt /lib/functions.sh references unset
+# IPKG_INSTROOT both while it is sourced and inside config_load. BusyBox ash
+# then exits immediately (rc=2) and `|| true` never runs, so LuCI shows
+# "Failed to read status" with empty output.
+set -e
 
 . /lib/functions.sh 2>/dev/null || true
 
