@@ -116,6 +116,47 @@ token_set="0"
 enroll_set="0"
 [ -n "$enroll_token" ] && enroll_set="1"
 
+# Host stats the Panel system/ops cards show, collected without blocking.
+# awk does the *1024 so 32-bit ash arithmetic cannot overflow on large disks.
+hostname="$(uname -n 2>/dev/null || true)"
+load1=""
+if [ -r /proc/loadavg ]; then
+	read -r load1 _ < /proc/loadavg || true
+fi
+congestion=""
+if [ -r /proc/sys/net/ipv4/tcp_congestion_control ]; then
+	congestion="$(tr -d ' \t\n' < /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null || true)"
+fi
+uptime_seconds="0"
+mem_total_bytes="0"
+mem_available_bytes="0"
+mem_used_bytes="0"
+disk_total_bytes="0"
+disk_used_bytes="0"
+if command -v awk >/dev/null 2>&1; then
+	if [ -r /proc/uptime ]; then
+		uptime_seconds="$(awk '{ printf "%.0f", $1 }' /proc/uptime 2>/dev/null || echo 0)"
+	fi
+	if [ -r /proc/meminfo ]; then
+		mem_total_bytes="$(awk '/^MemTotal:/ { printf "%.0f", $2 * 1024 }' /proc/meminfo 2>/dev/null || echo 0)"
+		mem_available_bytes="$(awk '/^MemAvailable:/ { printf "%.0f", $2 * 1024 }' /proc/meminfo 2>/dev/null || echo 0)"
+		mem_used_bytes="$(awk -v t="${mem_total_bytes:-0}" -v a="${mem_available_bytes:-0}" 'BEGIN { u=t-a; if (u<0) u=0; printf "%.0f", u }')"
+	fi
+	if command -v df >/dev/null 2>&1; then
+		df_out="$(df -Pk / 2>/dev/null | awk 'NR==2 { printf "%.0f %.0f", $2 * 1024, $3 * 1024 }' || true)"
+		if [ -n "$df_out" ]; then
+			disk_total_bytes="${df_out%% *}"
+			disk_used_bytes="${df_out#* }"
+		fi
+	fi
+fi
+[ -n "$uptime_seconds" ] || uptime_seconds="0"
+[ -n "$mem_total_bytes" ] || mem_total_bytes="0"
+[ -n "$mem_available_bytes" ] || mem_available_bytes="0"
+[ -n "$mem_used_bytes" ] || mem_used_bytes="0"
+[ -n "$disk_total_bytes" ] || disk_total_bytes="0"
+[ -n "$disk_used_bytes" ] || disk_used_bytes="0"
+
 now="$(date +%s 2>/dev/null || echo 0)"
 
 printf '{'
@@ -142,5 +183,13 @@ printf '"inbound_count":%s,' "${inbound_count:-0}"
 printf '"inbound_types":"%s",' "$(json_escape "$inbound_types")"
 printf '"has_frps":%s,' "$has_frps"
 printf '"uplink_bytes":%s,' "${uplink_bytes:-0}"
-printf '"downlink_bytes":%s' "${downlink_bytes:-0}"
+printf '"downlink_bytes":%s,' "${downlink_bytes:-0}"
+printf '"hostname":"%s",' "$(json_escape "$hostname")"
+printf '"load1":"%s",' "$(json_escape "$load1")"
+printf '"congestion":"%s",' "$(json_escape "$congestion")"
+printf '"uptime_seconds":%s,' "${uptime_seconds:-0}"
+printf '"mem_total_bytes":%s,' "${mem_total_bytes:-0}"
+printf '"mem_used_bytes":%s,' "${mem_used_bytes:-0}"
+printf '"disk_total_bytes":%s,' "${disk_total_bytes:-0}"
+printf '"disk_used_bytes":%s' "${disk_used_bytes:-0}"
 printf '}\n'
