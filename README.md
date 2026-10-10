@@ -122,6 +122,7 @@ make package/ladder-agent/compile V=s
 - **包名 / feed 名**：`ladder-agent`、`luci-app-ladder-agent` / `ladderairport`
 - **架构**：`aarch64_cortex-a53`、`aarch64_generic`、`arm_cortex-a7`、`arm_cortex-a9`、`mipsel_24kc` 与 `x86_64`，`fail-fast: false`，并发上限 8
 - **触发**：push/PR → CI artifacts；推送 `v*` tag → 聚合 feed 并发布 GitHub Release
+- **上游跟踪**：[`bump-upstream.yml`](.github/workflows/bump-upstream.yml) 每天读取 [LadderAirport](https://github.com/LadderAirport/LadderAirport) 最新 Release。submodule 未到该 tag、且不是比该 tag 更新的提交时，自动开 bump PR。可选 secret `UPSTREAM_BUMP_TOKEN` 让这个 PR 直接触发 CI；未配置时工作流用默认 token 开 PR，并再 `workflow_dispatch` 一次 `ci.yml`（默认 token 创建的 PR 不会触发其它 workflow）
 - **签名（可选）**：仓库 secret `KEY_BUILD`（usign）
 
 构建 tags 与主仓一致：`with_quic,with_utls`；`GOTOOLCHAIN=auto` 以匹配主仓 `go 1.26.x`。
@@ -144,6 +145,7 @@ luci-app-ladder-agent/         # LuCI 配置 + 状态
 .github/workflows/
   ci.yml
   release.yml
+  bump-upstream.yml
 ```
 
 ## 许可证
