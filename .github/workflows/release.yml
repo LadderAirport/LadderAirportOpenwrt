@@ -26,10 +26,13 @@ jobs:
       fail-fast: false
       max-parallel: 8
       matrix:
-        # Temporarily only arm64 (aarch64) + x86_64
+        # Common OpenWrt targets: arm64, arm, mipsel, x86_64
         arch:
           - aarch64_cortex-a53
           - aarch64_generic
+          - arm_cortex-a7
+          - arm_cortex-a9
+          - mipsel_24kc
           - x86_64
 
     steps:
