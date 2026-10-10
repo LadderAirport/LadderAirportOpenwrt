@@ -1,0 +1,123 @@
+name: Track upstream
+
+on:
+  schedule:
+    # Once a day. Releases are infrequent; workflow_dispatch covers an immediate check.
+    - cron: "20 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+concurrency:
+  group: upstream-bump
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    name: Bump LadderAirport submodule
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout feed
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: false
+          persist-credentials: false
+
+      - name: Compare submodule with latest upstream release
+        id: bump
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git submodule update --init LadderAirport
+          git -C LadderAirport fetch origin --tags --force
+
+          tag="$(gh api repos/LadderAirport/LadderAirport/releases/latest --jq .tag_name)"
+          case "$tag" in
+            v*) ;;
+            *)
+              echo "latest release tag is not v*: $tag" >&2
+              exit 1
+              ;;
+          esac
+
+          latest="$(git -C LadderAirport rev-parse "${tag}^{commit}")"
+          current="$(git -C LadderAirport rev-parse HEAD)"
+          echo "current=$current latest=$tag $latest"
+
+          if [ "$current" = "$latest" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Already at $tag"
+            exit 0
+          fi
+          if git -C LadderAirport merge-base --is-ancestor "$latest" "$current"; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Submodule $current is newer than $tag; not downgrading"
+            exit 0
+          fi
+
+          git -C LadderAirport checkout --detach "$latest"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "sha=$latest" >> "$GITHUB_OUTPUT"
+          echo "previous=$current" >> "$GITHUB_OUTPUT"
+
+      - name: Open bump pull request
+        if: steps.bump.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.UPSTREAM_BUMP_TOKEN || github.token }}
+          HAS_PAT: ${{ secrets.UPSTREAM_BUMP_TOKEN != '' }}
+          TAG: ${{ steps.bump.outputs.tag }}
+          SHA: ${{ steps.bump.outputs.sha }}
+          PREVIOUS: ${{ steps.bump.outputs.previous }}
+        run: |
+          set -euo pipefail
+          branch="chore/bump-ladderairport-${TAG}"
+          short="${SHA:0:12}"
+
+          existing="$(gh pr list --head "$branch" --state open --json number --jq '.[0].number // empty')"
+          if [ -n "$existing" ]; then
+            echo "Open PR #${existing} already exists for $branch"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add LadderAirport
+          git commit -m "chore: bump LadderAirport to ${TAG}"
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/${branch}"
+
+          cat > "$RUNNER_TEMP/pr-body.md" <<EOF
+          ## 变更
+
+          将 \`LadderAirport\` submodule 从 \`${PREVIOUS}\` 更新到上游 Release [\`${TAG}\`](https://github.com/LadderAirport/LadderAirport/releases/tag/${TAG})（\`${short}\`）。
+
+          包版本仍由 CI 对 submodule 执行 \`git describe\` 得到。本工作流不会直接发 OpenWrt Release；合并这个 PR 后，按现有 \`v*\` tag 流程发布。
+
+          ## 跟踪方式
+
+          \`.github/workflows/bump-upstream.yml\` 每天（以及手动 \`workflow_dispatch\`）读取 \`LadderAirport/LadderAirport\` 的最新 GitHub Release。submodule 已经是该 tag，或者比该 tag 更新时，不会降级。否则开此 PR。
+
+          若仓库配置了 secret \`UPSTREAM_BUMP_TOKEN\`（contents 与 pull requests 写权限），用它推分支，\`pull_request\` 会照常跑 CI。未配置时使用默认 \`GITHUB_TOKEN\`；该 token 打开的 PR 不会再触发其它 workflow，因此这里会额外 \`workflow_dispatch\` 一次 \`ci.yml\`。
+          EOF
+          sed -i 's/^          //' "$RUNNER_TEMP/pr-body.md"
+          gh pr create --base main --head "$branch" --title "chore: bump LadderAirport to ${TAG}" --body-file "$RUNNER_TEMP/pr-body.md"
+
+          if [ "$HAS_PAT" != "true" ]; then
+            # The ref can take a moment to be visible to workflow_dispatch.
+            ok=0
+            for _ in 1 2 3 4 5; do
+              if gh workflow run ci.yml --ref "$branch"; then
+                ok=1
+                break
+              fi
+              sleep 3
+            done
+            [ "$ok" = 1 ]
+            echo "Dispatched ci.yml on $branch because UPSTREAM_BUMP_TOKEN is not set"
+          fi
