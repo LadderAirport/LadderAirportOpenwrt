@@ -78,6 +78,7 @@ UCI 节 `ladder-agent.main`（文件 `/etc/config/ladder-agent`）：
 | `uplink_serve_grpc` | `0` | uplink 下仍监听 gRPC |
 | `uplink_ws` | `1` | WebSocket 实时通道 |
 | `report_address` | 空 | 上报地址覆盖 |
+| `egress_interface` | 空 | 本机出口逻辑接口（`wan` / `wwan` / `lan`）。空则跟随 Panel；非空时覆盖 Panel，并在下发前解析成当前 L3 设备 |
 | `tls_sans` | 空 | 续签额外 SAN（push / serve_grpc） |
 | `log_stderr` | `1` | procd 捕获 stderr |
 
@@ -137,16 +138,48 @@ make package/ladder-agent/compile V=s
 .gitmodules
 LadderAirport/                 # submodule → LadderAirport/LadderAirport
 net/ladder-agent/              # 节点 daemon 包
+  openwrtbind/                 # 逻辑接口 → L3 设备
+  patches/openwrt-bind.patch   # 打进 agent 的两处调用
 luci-app-ladder-agent/         # LuCI 配置 + 状态
   htdocs/.../view/ladder-agent/{status,config}.js
   root/usr/share/luci/menu.d/
   root/usr/share/rpcd/acl.d/
+  root/usr/lib/lua/luci/       # 仅 19.07（没有 menu.d 时）使用
   root/usr/libexec/ladder-agent/luci-status.sh
 .github/workflows/
   ci.yml
   release.yml
   bump-upstream.yml
 ```
+
+## 出口接口
+
+Panel 的「出口网卡」和本机 LuCI「Egress interface」最终都写成 sing-box 出站的 `bind_interface`（`SO_BINDTODEVICE`）。OpenWrt 上这个名字经常不是带着地址的那块网卡：UCI 的 `wan` 可能是 DSA 口，真正的三层设备是 `pppoe-wan`、`br-lan` 或 `wwan0`。Agent 在枚举和每次应用配置时读取 `ubus call network.interface dump`：
+
+- 下拉列表用逻辑接口名，并带上该接口当前地址（地址在 `pppoe-wan` 上时，`wan` 这一行也能看到公网地址）。没有地址的下层口（`lan1`、仅链路本地地址的 DSA `wan`）不出现。L3 设备名和逻辑名不一样时，L3 名（例如 `pppoe-wan`）仍留在列表里，已经保存的值对得上。
+- 已保存的 `wan` / `eth0.2` 会在 sing-box 启动前改写成当时的 `l3_device`。LuCI 里选了非空值时，用它覆盖 Panel 里的名字。
+- 修改 `/etc/config/network`（例如 DHCP 改成 PPPoE）会重启 agent，下一次拉配置时重新解析。
+
+不是 OpenWrt（没有 `ubus`）时这两步都不做，行为与上游 agent 相同。
+
+## OpenWrt 19.07 / 19.06 与 AW1000 Ultra
+
+没有官方 **19.06** 版本。19.x 的稳定版是 **19.07**（最后一版 19.07.10）。本 feed 的 CI 只打 **24.10** 的 `.ipk`（opkg，不是 25.12 起的 apk）。
+
+两台容易被叫成 AW1000 的设备不是同一块板：
+
+| 设备 | 硬件 | OpenWrt |
+| --- | --- | --- |
+| Arcadyan AW1000（官方支持） | Qualcomm IPQ8072A，目标 `qualcommax/ipq807x`，包架构 **`aarch64_cortex-a53`** | 23.05 起加入，24.10 / 25.12 有固件。架构已在本 feed 的 CI 矩阵里 |
+| Arcadyan AW1000 Ultra（又名 5G Box Meteor） | MediaTek T750 或 T850 | 上游没有目标、没有架构。Linux 主线不支持这颗 SoC，**不能**靠本仓库打出一个能刷上的 19.06 包 |
+
+因此 Ultra 刷着卖家提供的「OpenWrt 19.06」时，本仓库做不到对应目标的兼容构建：没有可交叉编译的 target，也没有 19.06 SDK。官方 AW1000 请用 23.05 或更新的系统，安装已有的 `aarch64_cortex-a53` 包。
+
+在**真正的 19.07**（架构能对上，例如已有矩阵里的 `mipsel_24kc`、`arm_cortex-a7`）上，静态链接的 `ladder-agent`（`CGO_ENABLED=0`）不依赖 24.10 的 musl，init 使用的 procd / UCI / `ubus` 在 19.07 就有，包本身也不配防火墙，所以 fw3 和 fw4 的差别不挡住 uplink。没做、也做不到的部分：
+
+- 不在 CI 里用 19.07 SDK 重打 ipk，不能在这里证明 19.07 的 opkg 一定接受 24.10 打出来的包。
+- 24.10 的 LuCI 页面是 `menu.d` + `'require view'` 的 JavaScript。19.07 的菜单来自 Lua `entry()`，不读 `menu.d`，也跑不了这套 JS。ipk 里另附了 Lua 控制器、CBI 和状态页，仅当系统里**没有** `/usr/share/luci/menu.d/luci-base.json` 时注册，避免和 21.02 及以后的菜单重复。这是配置回退，不是 Ultra 的固件移植。
+- 没有为 19.07 单独改依赖名。`luci-base`、`ca-bundle`、`curl`、`jsonfilter` 在 19.07 沿用同样的包名；装不上时以 opkg 的报错为准。
 
 ## 许可证
 

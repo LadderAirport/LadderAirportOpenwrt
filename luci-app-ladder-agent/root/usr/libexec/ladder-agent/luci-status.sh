@@ -45,6 +45,8 @@ uplink="1"
 uplink_serve_grpc="0"
 uplink_ws="1"
 report_address=""
+egress_interface=""
+applied_bind=""
 log_stderr="1"
 
 if [ -f /etc/config/ladder-agent ]; then
@@ -60,6 +62,7 @@ if [ -f /etc/config/ladder-agent ]; then
 	config_get_bool uplink_serve_grpc main uplink_serve_grpc 0
 	config_get_bool uplink_ws main uplink_ws 1
 	config_get report_address main report_address ""
+	config_get egress_interface main egress_interface ""
 	config_get_bool log_stderr main log_stderr 1
 fi
 
@@ -92,6 +95,7 @@ if [ -f "${data_dir}/current.json" ]; then
 	has_config="1"
 	config_bytes="$(wc -c < "${data_dir}/current.json" 2>/dev/null | tr -d ' ' || echo 0)"
 	if command -v jsonfilter >/dev/null 2>&1; then
+		applied_bind="$(jsonfilter -i "${data_dir}/current.json" -e '$.outbounds[0].bind_interface' 2>/dev/null || true)"
 		inbound_types="$(jsonfilter -i "${data_dir}/current.json" -e '$.inbounds[*].type' 2>/dev/null | tr '\n' ',' | sed 's/,$//')"
 		if [ -n "$inbound_types" ]; then
 			inbound_count="$(printf '%s' "$inbound_types" | awk -F',' '{print NF}')"
@@ -177,6 +181,8 @@ printf '"uplink":%s,' "$uplink"
 printf '"uplink_serve_grpc":%s,' "$uplink_serve_grpc"
 printf '"uplink_ws":%s,' "$uplink_ws"
 printf '"report_address":"%s",' "$(json_escape "$report_address")"
+printf '"egress_interface":"%s",' "$(json_escape "$egress_interface")"
+printf '"applied_bind":"%s",' "$(json_escape "$applied_bind")"
 printf '"has_config":%s,' "$has_config"
 printf '"config_bytes":%s,' "${config_bytes:-0}"
 printf '"inbound_count":%s,' "${inbound_count:-0}"

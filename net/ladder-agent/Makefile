@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=ladder-agent
-PKG_RELEASE:=1
+PKG_RELEASE:=2
 
 # Main monorepo is a git submodule at <feed>/LadderAirport (see .gitmodules).
 LADDER_SRC ?= $(shell \
@@ -40,6 +40,8 @@ endef
 define Package/ladder-agent/description
   LadderAirport node agent for OpenWrt: in-process sing-box and optional FRPS,
   managed by Panel over uplink (HTTP/WebSocket) by default.
+  Egress names from the Panel or LuCI are resolved to the live L3 device
+  (UCI wan to pppoe-wan) before sing-box starts.
 endef
 
 define Package/ladder-agent/conffiles
@@ -60,6 +62,13 @@ define Build/Prepare
 	$(CP) $(LADDER_SRC)/agent $(PKG_BUILD_DIR)/
 	$(CP) $(LADDER_SRC)/pkg $(PKG_BUILD_DIR)/
 	$(CP) $(LADDER_SRC)/proto $(PKG_BUILD_DIR)/
+	# OpenWrt logical interface -> live L3 device. Kept outside the submodule
+	# so an upstream bump does not drop it. The patch fails the build if the
+	# two call sites in the agent sources have moved.
+	mkdir -p $(PKG_BUILD_DIR)/agent/internal/openwrtbind
+	$(CP) ./openwrtbind/bind.go $(PKG_BUILD_DIR)/agent/internal/openwrtbind/bind.go
+	$(CP) ./files/control/openwrt_bind.go $(PKG_BUILD_DIR)/agent/internal/control/openwrt_bind.go
+	patch -N --batch -d $(PKG_BUILD_DIR)/agent -p1 -i $(CURDIR)/patches/openwrt-bind.patch
 endef
 
 define Build/Compile
