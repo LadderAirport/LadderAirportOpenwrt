@@ -2,7 +2,7 @@
 	"luci-app-ladder-agent": {
 		"description": "Grant access to LadderAirport agent config and status",
 		"read": {
-			"uci": [ "ladder-agent" ],
+			"uci": [ "ladder-agent", "network" ],
 			"file": {
 				"/usr/libexec/ladder-agent/luci-status.sh": [ "exec" ],
 				"/etc/init.d/ladder-agent": [ "exec" ],

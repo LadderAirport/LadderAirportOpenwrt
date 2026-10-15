@@ -235,6 +235,8 @@ function renderStatus(st) {
 		kv(_('节点 ID'), dash(st.node_id)),
 		kv(_('gRPC 监听'), dash(st.listen)),
 		kv(_('上报地址'), dash(st.report_address)),
+		kv(_('本机出口'), st.egress_interface ? st.egress_interface : _('跟随 Panel')),
+		kv(_('已绑定接口'), dash(st.applied_bind)),
 		kv(_('WebSocket'), st.uplink ? (st.uplink_ws ? _('已开启') : _('已关闭')) : '—'),
 		kv(_('Agent Token'), tokenText),
 		kv(_('注册令牌'), st.enroll_token_set ? _('待注册') : _('无'))

@@ -1,0 +1,21 @@
+<%+header%>
+<%
+local util = require "luci.util"
+local disp = require "luci.dispatcher"
+local raw = util.trim(util.exec("/usr/libexec/ladder-agent/luci-status.sh 2>/dev/null"))
+local action = disp.build_url("admin", "services", "ladder-agent", "action")
+%>
+<h2><%:LadderAirport Status%></h2>
+<p><%:This page is the OpenWrt 19.07 fallback. The agent resolves a chosen logical network to the live L3 device before sing-box starts.%></p>
+<div class="cbi-section">
+	<pre style="white-space:pre-wrap;word-break:break-word;"><%=pcdata(raw)%></pre>
+	<form method="post" action="<%=action%>" style="margin-top:1em;">
+		<input type="hidden" name="token" value="<%=token%>" />
+		<button class="cbi-button cbi-button-apply" type="submit" name="action" value="start"><%:Start%></button>
+		<button class="cbi-button cbi-button-remove" type="submit" name="action" value="stop"><%:Stop%></button>
+		<button class="cbi-button" type="submit" name="action" value="restart"><%:Restart%></button>
+		<button class="cbi-button" type="submit" name="action" value="enable"><%:Enable on boot%></button>
+		<button class="cbi-button" type="submit" name="action" value="disable"><%:Disable on boot%></button>
+	</form>
+</div>
+<%+footer%>

@@ -1,0 +1,45 @@
+--- a/internal/control/interfaces.go
++++ b/internal/control/interfaces.go
+@@ -8,16 +8,19 @@
+ )
+ 
+ // InterfacesProvider is a pluggable network interface enumerator.
+ type InterfacesProvider func() ([]*agentv1.NetworkInterface, error)
+ 
+ // listHostInterfaces enumerates host network interfaces for egress selection.
+ // Returns all interfaces (including loopback/down); the UI decides what to show.
+ func listHostInterfaces() ([]*agentv1.NetworkInterface, error) {
++	if ifaces, ok := listOpenWrtInterfaces(); ok {
++		return ifaces, nil
++	}
+ 	ifaces, err := net.Interfaces()
+ 	if err != nil {
+ 		return nil, fmt.Errorf("获取网卡列表失败：%w", err)
+ 	}
+ 	out := make([]*agentv1.NetworkInterface, 0, len(ifaces))
+ 	for _, iface := range ifaces {
+ 		item := &agentv1.NetworkInterface{
+ 			Name:         iface.Name,
+--- a/internal/control/runtime_box.go
++++ b/internal/control/runtime_box.go
+@@ -365,16 +365,20 @@
+ 
+ // prepareConfigJSON applies platform-neutral and platform-specific rewrites
+ // before parse/start. Safe to call on already-prepared JSON (idempotent).
+ func prepareConfigJSON(configJSON string) (string, error) {
+ 	configJSON, err := ensureDefaultDNS(configJSON)
+ 	if err != nil {
+ 		return "", err
+ 	}
++	configJSON, err = rewriteOpenWrtBindInterfaces(configJSON)
++	if err != nil {
++		return "", err
++	}
+ 	return sanitizePlatformConfig(configJSON)
+ }
+ 
+ func ensureDefaultDNS(configJSON string) (string, error) {
+ 	var document map[string]stdjson.RawMessage
+ 	if err := stdjson.Unmarshal([]byte(configJSON), &document); err != nil {
+ 		return "", fmt.Errorf("解析节点配置失败：%w", err)
+ 	}

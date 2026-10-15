@@ -82,6 +82,9 @@ start_service() {
 
 service_triggers() {
 	procd_add_reload_trigger "ladder-agent"
+	# WAN proto/device changes (DHCP <-> PPPoE) move the L3 device. Restart
+	# so the next config apply binds the new one.
+	procd_add_reload_trigger "network"
 }
 
 reload_service() {

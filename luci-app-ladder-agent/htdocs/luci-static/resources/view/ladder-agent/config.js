@@ -7,7 +7,10 @@
 
 return view.extend({
 	load: function () {
-		return uci.load('ladder-agent');
+		return Promise.all([
+			uci.load('ladder-agent'),
+			uci.load('network')
+		]);
 	},
 
 	render: function () {
@@ -74,6 +77,18 @@ return view.extend({
 		o = s.option(form.Value, 'tls_sans', _('TLS extra SANs'),
 			_('Comma-separated DNS:/IP: SANs for certificate renewals.'));
 		o.rmempty = true;
+
+		o = s.option(form.ListValue, 'egress_interface', _('Egress interface'),
+			_('Logical network (wan, wwan, lan, …) used as the proxy egress on this router. The agent binds sing-box to that network\'s current L3 device (for example pppoe-wan), including when the Panel stored the lower device name. Empty follows the Panel.'));
+		o.value('', _('Follow Panel'));
+		o.rmempty = true;
+		o.default = '';
+		(uci.sections('network', 'interface') || []).forEach(function (sec) {
+			var name = sec['.name'];
+			if (!name || name === 'loopback')
+				return;
+			o.value(name, name + (sec.proto ? ' (' + sec.proto + ')' : ''));
+		});
 
 		o = s.option(form.Flag, 'log_stderr', _('Log to stderr (procd)'));
 		o.default = '1';
