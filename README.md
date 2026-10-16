@@ -129,7 +129,7 @@ ipk 外壳版本和二进制里的核心版本分开注入，不再把去掉 `v`
 
 `PKG_VERSION` 仍是 submodule `git describe` 去掉 `v`（下划线改成连字符），ipk 文件名保持原样。`PKG_RELEASE` 只表示这个 feed 重新打包的次数。opkg 自己的版本字符串是 `0.15.12-2`；上报用的外壳版本多一个 `r`，写成 `0.15.12-r2`。
 
-主仓 `agent/internal/version` 尚未声明 `ClientType`、`ClientVersion`、`LuciVersion` 时，打包会在编译树里补上同名变量，ldflags 才能写进去。上游已经声明同名变量之后，这份补声明会自动去掉。Ping、HTTP 和 WebSocket 上报目前还没有这些字段，要等主仓把上述变量放进上报结构并合并后，再抬 submodule，Panel 才会收到 `client_type`、`client_version`、`luci_version` 和 `core_commit`。`agent_version` 从这一版起就是带 `v` 的核心版本。
+主仓 `agent/internal/version` 已经声明 `ClientType`、`ClientVersion`、`LuciVersion`，Ping、HTTP 和 WebSocket 上报会带上这些字段。本包只通过 ldflags 和进程启动时的 LuCI 读取赋值，不再在编译树里重复声明。若某个名字从 version 包消失，打包仍会补上同名变量，避免 ldflags 对空符号失败。空的 `LuciVersion` 由主仓在上报时省略。
 
 ## CI
 

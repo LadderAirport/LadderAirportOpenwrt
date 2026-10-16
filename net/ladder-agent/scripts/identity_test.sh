@@ -183,6 +183,26 @@ else
 	cat "$partial/openwrt_client_identity.go" >&2 || true
 fi
 
+# Exact declarations landed in LadderAirport agent/internal/version.
+landed=$(mktemp -d)
+cat >"$landed/version.go" <<'EOF'
+package version
+
+var Version = "0.1.0-dev"
+var Commit = "unknown"
+var BuiltAt = "unknown"
+var ClientType = "linux"
+var ClientVersion = ""
+var LuciVersion = ""
+EOF
+echo 'package version' >"$landed/openwrt_client_identity.go"
+sh "$write" "$landed"
+if [ ! -f "$landed/openwrt_client_identity.go" ]; then
+	ok "landed upstream symbols drop the var stub"
+else
+	bad "var stub written beside the landed version package"
+fi
+
 # Full upstream: do not emit a second declaration.
 full=$(mktemp -d)
 cat >"$full/version.go" <<'EOF'
