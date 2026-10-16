@@ -1,6 +1,11 @@
+# Directory of this Makefile, before rules.mk is appended to MAKEFILE_LIST.
+LADDER_PKG_DIR:=$(patsubst %/,%,$(dir $(lastword $(MAKEFILE_LIST))))
+
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=ladder-agent
+# Feed repack counter only. client_version is $(PKG_VERSION)-r$(PKG_RELEASE),
+# for example 0.15.12-r2. It is not part of the core version.
 PKG_RELEASE:=2
 
 # Main monorepo is a git submodule at <feed>/LadderAirport (see .gitmodules).
@@ -15,6 +20,18 @@ ifeq ($(origin PKG_VERSION),undefined)
 		git -C "$(LADDER_SRC)" describe --tags --always 2>/dev/null | sed 's/^v//' | tr '_' '-'; \
 	else echo 0.0.0; fi)
 endif
+
+# Core identity is the submodule checkout, not the feed repack.
+# version.Version / agent_version / core_version: vX.Y.Z on a tag, otherwise
+# vX.Y.Z-N-gSHA. Never pass --abbrev=0; that drops the commit distance.
+# version.Commit is core_commit (short SHA).
+# version.ClientType is the closed enum "openwrt".
+# version.ClientVersion is the feed package, PKG_VERSION-rPKG_RELEASE.
+# version.LuciVersion is not an ldflag; the process reads it at startup.
+LADDER_CLIENT_TYPE:=openwrt
+LADDER_CLIENT_VERSION:=$(PKG_VERSION)-r$(PKG_RELEASE)
+LADDER_CORE_VERSION:=$(shell sh $(LADDER_PKG_DIR)/scripts/core-identity.sh version "$(LADDER_SRC)")
+LADDER_CORE_COMMIT:=$(shell sh $(LADDER_PKG_DIR)/scripts/core-identity.sh commit "$(LADDER_SRC)")
 
 PKG_LICENSE:=MIT
 PKG_MAINTAINER:=LadderAirport <https://github.com/LadderAirport/LadderAirportOpenwrt>
@@ -69,6 +86,20 @@ define Build/Prepare
 	$(CP) ./openwrtbind/bind.go $(PKG_BUILD_DIR)/agent/internal/openwrtbind/bind.go
 	$(CP) ./files/control/openwrt_bind.go $(PKG_BUILD_DIR)/agent/internal/control/openwrt_bind.go
 	patch -N --batch -d $(PKG_BUILD_DIR)/agent -p1 -i $(CURDIR)/patches/openwrt-bind.patch
+	@if [ "$(LADDER_CORE_VERSION)" = "v0.0.0" ] || [ "$(LADDER_CORE_COMMIT)" = "unknown" ]; then \
+		echo "ERROR: core identity is $(LADDER_CORE_VERSION) / $(LADDER_CORE_COMMIT)"; \
+		echo "git describe --tags --always (leading v, never --abbrev=0) and rev-parse --short must succeed in $(LADDER_SRC)"; \
+		exit 1; \
+	fi
+	# LuCI version is read at process start from the opkg control file.
+	# ClientType / ClientVersion / LuciVersion are declared here only while
+	# the linked version package does not declare those names yet.
+	mkdir -p $(PKG_BUILD_DIR)/agent/internal/openwrtversion
+	$(CP) $(LADDER_PKG_DIR)/openwrtversion/*.go $(PKG_BUILD_DIR)/agent/internal/openwrtversion/
+	rm -f $(PKG_BUILD_DIR)/agent/internal/openwrtversion/*_test.go
+	# zzz_ so this init runs after other files in the version package.
+	$(CP) $(LADDER_PKG_DIR)/files/version/openwrt_luci.go $(PKG_BUILD_DIR)/agent/internal/version/zzz_openwrt_luci.go
+	sh $(LADDER_PKG_DIR)/scripts/write-client-identity.sh $(PKG_BUILD_DIR)/agent/internal/version
 endef
 
 define Build/Compile
@@ -84,7 +115,10 @@ define Build/Compile
 	# and the git command substitution is dropped.
 	( \
 		SINGBOX_VER=$$$$(git -C "$(PKG_BUILD_DIR)/agent/sing-box" describe --tags 2>/dev/null | sed 's/^v//' || echo unknown); \
-		VERSION_LDFLAGS="-X 'github.com/ladderairport/agent/internal/version.Version=$(PKG_VERSION)'"; \
+		VERSION_LDFLAGS="-X 'github.com/ladderairport/agent/internal/version.Version=$(LADDER_CORE_VERSION)'"; \
+		VERSION_LDFLAGS="$$$$VERSION_LDFLAGS -X 'github.com/ladderairport/agent/internal/version.Commit=$(LADDER_CORE_COMMIT)'"; \
+		VERSION_LDFLAGS="$$$$VERSION_LDFLAGS -X 'github.com/ladderairport/agent/internal/version.ClientType=$(LADDER_CLIENT_TYPE)'"; \
+		VERSION_LDFLAGS="$$$$VERSION_LDFLAGS -X 'github.com/ladderairport/agent/internal/version.ClientVersion=$(LADDER_CLIENT_VERSION)'"; \
 		VERSION_LDFLAGS="$$$$VERSION_LDFLAGS -X 'github.com/sagernet/sing-box/constant.Version=$$$$SINGBOX_VER'"; \
 		cd $(PKG_BUILD_DIR)/agent && \
 		$(GO_PKG_VARS) \

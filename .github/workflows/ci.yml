@@ -60,8 +60,11 @@ jobs:
         working-directory: feed
         run: |
           VER="$(git -C LadderAirport describe --tags --always 2>/dev/null | sed 's/^v//' | tr '_' '-')"
+          CORE="$(sh net/ladder-agent/scripts/core-identity.sh version LadderAirport)"
+          COMMIT="$(sh net/ladder-agent/scripts/core-identity.sh commit LadderAirport)"
+          REL="$(sed -n 's/^PKG_RELEASE:=//p' net/ladder-agent/Makefile | head -n 1)"
           echo "pkg_version=${VER:-0.0.0-ci}" >> "$GITHUB_OUTPUT"
-          echo "Building ladder-agent PKG_VERSION=${VER:-0.0.0-ci} arch=${{ matrix.arch }}"
+          echo "Building ladder-agent PKG_VERSION=${VER:-0.0.0-ci} client_version=${VER:-0.0.0-ci}-r${REL:-2} core_version=${CORE} core_commit=${COMMIT} client_type=openwrt arch=${{ matrix.arch }}"
           echo "LadderAirport=$(git -C LadderAirport rev-parse --short HEAD)"
 
       - name: Build with OpenWrt SDK
