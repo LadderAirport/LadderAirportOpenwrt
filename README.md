@@ -115,6 +115,22 @@ git clone --recurse-submodules https://github.com/LadderAirport/LadderAirportOpe
 make package/ladder-agent/compile V=s
 ```
 
+## 版本
+
+ipk 外壳版本和二进制里的核心版本分开注入，不再把去掉 `v` 的 `PKG_VERSION` 写进 `agent_version`。
+
+| 上报字段 | `version` 包变量 | OpenWrt 取值 |
+| --- | --- | --- |
+| `agent_version`、`core_version` | `Version` | submodule `git describe --tags --always`，保留前缀 `v`。在标签上是 `vX.Y.Z`，否则是 `vX.Y.Z-N-gSHA`。不使用 `--abbrev=0` |
+| `core_commit` | `Commit` | submodule 短 SHA（`git rev-parse --short`） |
+| `client_type` | `ClientType` | `openwrt` |
+| `client_version` | `ClientVersion` | `PKG_VERSION-rPKG_RELEASE`，例如 `0.15.12-r2` |
+| `luci_version` | `LuciVersion` | 进程启动时读 `/usr/lib/opkg/info/luci-app-ladder-agent.control` 的 `Version`。文件不存在（未安装 LuCI）则留空，上报时省略 |
+
+`PKG_VERSION` 仍是 submodule `git describe` 去掉 `v`（下划线改成连字符），ipk 文件名保持原样。`PKG_RELEASE` 只表示这个 feed 重新打包的次数。opkg 自己的版本字符串是 `0.15.12-2`；上报用的外壳版本多一个 `r`，写成 `0.15.12-r2`。
+
+主仓 `agent/internal/version` 已经声明 `ClientType`、`ClientVersion`、`LuciVersion`，Ping、HTTP 和 WebSocket 上报会带上这些字段。本包只通过 ldflags 和进程启动时的 LuCI 读取赋值，不再在编译树里重复声明。若某个名字从 version 包消失，打包仍会补上同名变量，避免 ldflags 对空符号失败。空的 `LuciVersion` 由主仓在上报时省略。
+
 ## CI
 
 - **分支目标**：OpenWrt `24.10`（`.ipk`）
@@ -139,7 +155,10 @@ make package/ladder-agent/compile V=s
 LadderAirport/                 # submodule → LadderAirport/LadderAirport
 net/ladder-agent/              # 节点 daemon 包
   openwrtbind/                 # 逻辑接口 → L3 设备
+  openwrtversion/              # 运行时读取 LuCI opkg control
   patches/openwrt-bind.patch   # 打进 agent 的两处调用
+  scripts/core-identity.sh     # 核心版本（保留 v）和短 SHA
+  files/version/openwrt_luci.go
 luci-app-ladder-agent/         # LuCI 配置 + 状态
   htdocs/.../view/ladder-agent/{status,config}.js
   root/usr/share/luci/menu.d/
@@ -175,7 +194,7 @@ Panel 的「出口网卡」和本机 LuCI「Egress interface」最终都写成 s
 
 因此 Ultra 刷着卖家提供的「OpenWrt 19.06」时，本仓库做不到对应目标的兼容构建：没有可交叉编译的 target，也没有 19.06 SDK。官方 AW1000 请用 23.05 或更新的系统，安装已有的 `aarch64_cortex-a53` 包。
 
-在**真正的 19.07**（架构能对上，例如已有矩阵里的 `mipsel_24kc`、`arm_cortex-a7`）上，静态链接的 `ladder-agent`（`CGO_ENABLED=0`）不依赖 24.10 的 musl，init 使用的 procd / UCI / `ubus` 在 19.07 就有，包本身也不配防火墙，所以 fw3 和 fw4 的差别不挡住 uplink。没做、也做不到的部分：
+在**真正的 19.07**（架构能对上，例如已有矩阵里的 `mipsel_24kc`、`arm_cortex-a7`）上，静态链接的 `ladder-agent`（`CGO_ENABLED=0`）不依赖 24.10 的 musl，init 使用的 procd / UCI / `ubus` 在 19.07 就有，包本身也不配防火墙，所以 fw3 和 fw4 的差别不挡住 uplink。LuCI 版本读的是 opkg 的 `/usr/lib/opkg/info/*.control`，19.07 和 24.10 都是这条路径。没做、也做不到的部分：
 
 - 不在 CI 里用 19.07 SDK 重打 ipk，不能在这里证明 19.07 的 opkg 一定接受 24.10 打出来的包。
 - 24.10 的 LuCI 页面是 `menu.d` + `'require view'` 的 JavaScript。19.07 的菜单来自 Lua `entry()`，不读 `menu.d`，也跑不了这套 JS。ipk 里另附了 Lua 控制器、CBI 和状态页，仅当系统里**没有** `/usr/share/luci/menu.d/luci-base.json` 时注册，避免和 21.02 及以后的菜单重复。这是配置回退，不是 Ultra 的固件移植。

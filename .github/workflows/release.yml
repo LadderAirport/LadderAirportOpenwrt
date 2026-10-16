@@ -62,7 +62,15 @@ jobs:
           else
             VER="$(git -C LadderAirport describe --tags --always 2>/dev/null | sed 's/^v//' | tr '_' '-')"
           fi
+          CORE="$(sh net/ladder-agent/scripts/core-identity.sh version LadderAirport)"
+          COMMIT="$(sh net/ladder-agent/scripts/core-identity.sh commit LadderAirport)"
+          REL="$(sed -n 's/^PKG_RELEASE:=//p' net/ladder-agent/Makefile | head -n 1)"
+          # client_version follows the submodule describe inside the package
+          # Makefile (PKG_VERSION-rPKG_RELEASE). The SDK container does not
+          # receive the PKG_VERSION env var.
+          PKG="$(git -C LadderAirport describe --tags --always 2>/dev/null | sed 's/^v//' | tr '_' '-')"
           echo "pkg_version=${VER:-0.0.0}" >> "$GITHUB_OUTPUT"
+          echo "core_version=${CORE} core_commit=${COMMIT} client_type=openwrt client_version=${PKG:-0.0.0}-r${REL:-2}"
           echo "LadderAirport=$(git -C LadderAirport rev-parse --short HEAD)"
 
       - name: Build with OpenWrt SDK

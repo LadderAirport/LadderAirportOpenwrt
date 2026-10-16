@@ -35,5 +35,5 @@ check-src:
 		exit 1; \
 	}
 	@echo "OK: LADDER_SRC=$(LADDER_SRC) (git submodule)"
-	@git -C "$(LADDER_SRC)" describe --tags --always 2>/dev/null || true
-	@git -C "$(LADDER_SRC)" rev-parse --short HEAD 2>/dev/null || true
+	@echo "core_version=$$(sh "$(CURDIR)/net/ladder-agent/scripts/core-identity.sh" version "$(LADDER_SRC)")"
+	@echo "core_commit=$$(sh "$(CURDIR)/net/ladder-agent/scripts/core-identity.sh" commit "$(LADDER_SRC)")"
