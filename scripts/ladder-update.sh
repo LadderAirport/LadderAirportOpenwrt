@@ -4,7 +4,9 @@
 # POSIX sh / BusyBox ash (OpenWrt 19.07 and newer). No bash, jq, or GNU tar.
 # Downloads one arch tarball from a GitHub Release, checks each ipk against
 # the Packages index SHA256, installs ladder-agent before luci-app-ladder-agent,
-# and leaves /etc/config/ladder-agent alone.
+# and leaves /etc/config/ladder-agent alone. Packages from 0.16.0-r4 on
+# do not ship that file as a conffile; an older install may still have
+# left /etc/config/ladder-agent-opkg.
 #
 #   curl -fsSL https://github.com/LadderAirport/LadderAirportOpenwrt/releases/latest/download/ladder-update.sh | sh
 #
@@ -26,13 +28,14 @@ usage() {
 用法: ladder-update.sh [选项] [版本]
 
 从 GitHub Release 安装或升级 ladder-agent 和 luci-app-ladder-agent。
-已安装的 /etc/config/ladder-agent 不会被覆盖。
+已安装的 /etc/config/ladder-agent 不会被覆盖。0.16.0-r4 起，包本身
+只补上缺失的选项，不改已有的值，也不再把这份配置打成 conffile。
 
   版本              Release 标签，例如 v0.16.0-2 或 0.16.0-2。省略则用最新发布。
   --arch ARCH       使用该架构的包，不再看 opkg print-architecture
   --force           版本相同也重新安装
-  --drop-opkg       列出新选项后删除 /etc/config/ladder-agent-opkg
-                    默认保留该文件。两种情况下都不改现有配置里的值。
+  --drop-opkg       列出新选项后删除旧包留下的 /etc/config/ladder-agent-opkg
+                    0.16.0-r3 及更早才会生成它。默认保留。两种情况下都不改已有的值。
   -h, --help        显示本说明
 
 环境变量:
@@ -151,6 +154,14 @@ file_sha256() {
 	die "需要 sha256sum 或 openssl 才能校验 ipk"
 }
 
+# OpenWrt BusyBox is often built without FEATURE_TR_CLASSES. In that build,
+# `tr -d '[:space:]'` deletes the literal characters in "[ :space:]" — including
+# a, c, and e — and corrupts a hex digest. Fold case and drop whitespace here
+# instead of calling tr.
+normalize_hex() {
+	awk '{ gsub(/[ \t\r]/, ""); print tolower($0) }'
+}
+
 index_field() {
 	pkg=$1
 	field=$2
@@ -186,6 +197,46 @@ uci_keys() {
 		s/^[[:space:]]*option[[:space:]][[:space:]]*\([A-Za-z0-9_][A-Za-z0-9_]*\).*/\1/p
 		s/^[[:space:]]*list[[:space:]][[:space:]]*\([A-Za-z0-9_][A-Za-z0-9_]*\).*/\1/p
 	' "$file" | awk '!seen[$0]++'
+}
+
+# One line per option/list assignment: "option token secret".
+# uci commit rewrites the file, so a byte compare would warn when the
+# package only fills in a missing option.
+uci_assignments() {
+	file=$1
+	[ -f "$file" ] || return 0
+	awk '
+		function unquote(s,    q, n) {
+			gsub(/^[ \t]+/, "", s)
+			gsub(/[ \t]+$/, "", s)
+			n = length(s)
+			q = substr(s, 1, 1)
+			if (n >= 2 && (q == "\047" || q == "\"") && substr(s, n, 1) == q)
+				return substr(s, 2, n - 2)
+			return s
+		}
+		$1 == "option" || $1 == "list" {
+			kind = $1
+			key = $2
+			rest = $0
+			sub(/^[ \t]*(option|list)[ \t]+[^ \t]+[ \t]+/, "", rest)
+			print kind, key, unquote(rest)
+		}
+	' "$file"
+}
+
+# Exit 0 when an assignment that was already set is missing or different.
+config_values_changed() {
+	before=$1
+	after=$2
+	line=
+	while IFS= read -r line || [ -n "$line" ]; do
+		[ -n "$line" ] || continue
+		if ! grep -qxF -e "$line" "$after"; then
+			return 0
+		fi
+	done <"$before"
+	return 1
 }
 
 # Pretty-printed GitHub release JSON. Ignores the release-level "name"
@@ -266,6 +317,7 @@ report_opkg_config() {
 	keys_old=$3
 	keys_new=$4
 	[ -f "$cfg_new" ] || return 0
+	printf '%s\n' "发现旧包留下的 ${cfg_new}。0.16.0-r3 及更早把该配置当成 conffile，opkg 才会另存这个文件。当前包只补缺失选项，不改已有的值。"
 	if [ ! -f "$cfg" ]; then
 		printf '%s\n' "发现 ${cfg_new}，但还没有 ${cfg}。"
 	else
@@ -335,8 +387,8 @@ install_pkg() {
 	esac
 	ipk=$(dirname "$packages_file")/$fn
 	[ -f "$ipk" ] || die "找不到 ${ipk}"
-	got=$(file_sha256 "$ipk" | tr 'A-F' 'a-f')
-	want=$(printf '%s' "$sum" | tr 'A-F' 'a-f' | tr -d '[:space:]')
+	got=$(file_sha256 "$ipk" | normalize_hex)
+	want=$(printf '%s\n' "$sum" | normalize_hex)
 	if [ "$got" != "$want" ]; then
 		die "${fn} 的 SHA256 与 Packages 索引不符"
 	fi
@@ -469,19 +521,23 @@ main() {
 	old_luci=$(opkg_version luci-app-ladder-agent)
 	new_agent=$(index_field ladder-agent Version "$packages_file")
 	new_luci=$(index_field luci-app-ladder-agent Version "$packages_file")
-	cfg_hash=
+	: >"$workdir/cfg.before"
 	if [ -f "$cfg" ]; then
-		cfg_hash=$(file_sha256 "$cfg")
+		uci_assignments "$cfg" | sort >"$workdir/cfg.before"
 	fi
 
 	did_install=0
 	install_pkg ladder-agent "$packages_file"
 	install_pkg luci-app-ladder-agent "$packages_file"
 
-	if [ -n "$cfg_hash" ]; then
-		now_hash=$(file_sha256 "$cfg")
-		if [ "$now_hash" != "$cfg_hash" ]; then
-			printf '%s\n' "警告: ${cfg} 的内容变了，请核对自己的配置。" >&2
+	if [ -s "$workdir/cfg.before" ]; then
+		if [ ! -f "$cfg" ]; then
+			printf '%s\n' "警告: ${cfg} 不见了，请核对自己的配置。" >&2
+		else
+			uci_assignments "$cfg" | sort >"$workdir/cfg.after"
+			if config_values_changed "$workdir/cfg.before" "$workdir/cfg.after"; then
+				printf '%s\n' "警告: ${cfg} 里已有选项的值变了，请核对自己的配置。" >&2
+			fi
 		fi
 	fi
 

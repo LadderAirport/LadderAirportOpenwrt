@@ -100,5 +100,11 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y shellcheck dash busybox
-          shellcheck -s sh scripts/ladder-update.sh scripts/ladder-update_test.sh
+          shellcheck -s sh \
+            scripts/ladder-update.sh \
+            scripts/ladder-update_test.sh \
+            net/ladder-agent/files/ensure-config.sh \
+            net/ladder-agent/files/50-ladder-agent \
+            net/ladder-agent/scripts/ensure-config_test.sh
           sh scripts/ladder-update_test.sh
+          sh net/ladder-agent/scripts/ensure-config_test.sh

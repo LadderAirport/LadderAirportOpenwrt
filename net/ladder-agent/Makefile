@@ -6,7 +6,7 @@ include $(TOPDIR)/rules.mk
 PKG_NAME:=ladder-agent
 # Feed repack counter only. client_version is $(PKG_VERSION)-r$(PKG_RELEASE),
 # for example 0.15.12-r2. It is not part of the core version.
-PKG_RELEASE:=3
+PKG_RELEASE:=4
 
 # Main monorepo is a git submodule at <feed>/LadderAirport (see .gitmodules).
 LADDER_SRC ?= $(shell \
@@ -61,8 +61,20 @@ define Package/ladder-agent/description
   (UCI wan to pppoe-wan) before sing-box starts.
 endef
 
-define Package/ladder-agent/conffiles
-/etc/config/ladder-agent
+# /etc/config/ladder-agent is user state, not a packaged conffile. Shipping
+# it made opkg save a differing file as ladder-agent-opkg on every upgrade.
+# preinst copies a live config aside: upgrading from 0.16.0-r3 deletes that
+# path, because the old package owned it. uci-defaults restores the copy and
+# adds options that are not set. Removing this package does not delete the
+# config, because the file is not in the package list. Do not add a postrm
+# that removes it.
+define Package/ladder-agent/preinst
+#!/bin/sh
+[ -n "$${IPKG_INSTROOT}" ] && exit 0
+if [ -f /etc/config/ladder-agent ]; then
+	cp -f /etc/config/ladder-agent /tmp/ladder-agent.config.preserve || exit 1
+fi
+exit 0
 endef
 
 AGENT_TAGS:=with_quic,with_utls
@@ -153,11 +165,15 @@ define Package/ladder-agent/install
 	$(INSTALL_DIR) $(1)/etc/init.d
 	$(INSTALL_BIN) ./files/ladder-agent.init $(1)/etc/init.d/ladder-agent
 
-	$(INSTALL_DIR) $(1)/etc/config
-	$(INSTALL_CONF) ./files/ladder-agent.config $(1)/etc/config/ladder-agent
+	$(INSTALL_DIR) $(1)/usr/share/ladder-agent
+	$(INSTALL_DATA) ./files/ladder-agent.defaults $(1)/usr/share/ladder-agent/ladder-agent.defaults
 
 	$(INSTALL_DIR) $(1)/usr/libexec/ladder-agent
 	$(INSTALL_BIN) ./files/enroll.sh $(1)/usr/libexec/ladder-agent/enroll.sh
+	$(INSTALL_BIN) ./files/ensure-config.sh $(1)/usr/libexec/ladder-agent/ensure-config
+
+	$(INSTALL_DIR) $(1)/etc/uci-defaults
+	$(INSTALL_BIN) ./files/50-ladder-agent $(1)/etc/uci-defaults/50-ladder-agent
 
 	$(INSTALL_DIR) $(1)/lib/upgrade/keep.d
 	$(INSTALL_DATA) ./files/ladder-agent.keep $(1)/lib/upgrade/keep.d/ladder-agent

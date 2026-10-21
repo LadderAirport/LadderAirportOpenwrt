@@ -47,17 +47,21 @@ setup() {
 	printf 'luci-bytes\n' >"$feed/luci-app-ladder-agent_0.16.0-2_all.ipk"
 	agent_sum=$(sha256sum "$feed/ladder-agent_0.16.0-2_aarch64_cortex-a53.ipk" | awk '{ print $1 }')
 	luci_sum=$(sha256sum "$feed/luci-app-ladder-agent_0.16.0-2_all.ipk" | awk '{ print $1 }')
-	cat >"$feed/Packages" <<EOF
-Package: ladder-agent
-Version: 0.16.0-2
-Filename: ladder-agent_0.16.0-2_aarch64_cortex-a53.ipk
-SHA256sum: $agent_sum
-
-Package: luci-app-ladder-agent
-Version: 0.16.0-2
-Filename: luci-app-ladder-agent_0.16.0-2_all.ipk
-SHA256sum: $luci_sum
-EOF
+	# Upper case plus a trailing space/CR. A correct checker folds this back.
+	# `tr -d '[:space:]'` on a class-incapable tr would also delete a, c, and e.
+	agent_sum_raw=$(printf '%s' "$agent_sum" | awk '{ print toupper($0) }')
+	luci_sum_raw=$(printf '%s' "$luci_sum" | awk '{ print toupper($0) }')
+	{
+		printf '%s\n' "Package: ladder-agent"
+		printf '%s\n' "Version: 0.16.0-2"
+		printf '%s\n' "Filename: ladder-agent_0.16.0-2_aarch64_cortex-a53.ipk"
+		printf 'SHA256sum: %s \r\n' "$agent_sum_raw"
+		printf '\n'
+		printf '%s\n' "Package: luci-app-ladder-agent"
+		printf '%s\n' "Version: 0.16.0-2"
+		printf '%s\n' "Filename: luci-app-ladder-agent_0.16.0-2_all.ipk"
+		printf 'SHA256sum: %s \r\n' "$luci_sum_raw"
+	} >"$feed/Packages"
 	tar -czf "$base/good.tar.gz" -C "$base/feed" .
 	cp "$base/good.tar.gz" "$base/bad.tar.gz"
 	# Rebuild a tarball whose index hash does not match the ipk bytes.
@@ -195,6 +199,12 @@ STATUS
 	if [ "\$pkg" = ladder-agent ] && [ "\${MOCK_WRITE_OPKG:-}" = 1 ]; then
 		cp "$base/opkg-config" "$ROOT/etc/config/ladder-agent-opkg"
 	fi
+	if [ "\$pkg" = ladder-agent ] && [ "\${MOCK_CLOBBER_CONFIG:-}" = 1 ]; then
+		printf '%s\n' "config ladder-agent 'main'" "	option token 'clobbered'" >"$ROOT/etc/config/ladder-agent"
+	fi
+	if [ "\$pkg" = ladder-agent ] && [ "\${MOCK_ADD_OPTION:-}" = 1 ]; then
+		printf '%s\n' "	option egress_interface ''" >>"$ROOT/etc/config/ladder-agent"
+	fi
 	;;
 *)
 	echo "bad opkg \$cmd" >&2
@@ -242,6 +252,66 @@ else:
 ' "$expr"
 EOF
 	chmod +x "$BIN/jsonfilter"
+
+	# BusyBox tr without FEATURE_TR_CLASSES: [:space:] is the literal set
+	# "[ :space:]", so -d removes a, c, and e. Ranges such as A-F still expand.
+	cat >"$BIN/tr" <<'EOF'
+#!/usr/bin/env python3
+import sys
+
+def expand(s):
+    out = []
+    i = 0
+    while i < len(s):
+        if i + 2 < len(s) and s[i + 1] == "-":
+            a, b = s[i], s[i + 2]
+            if a <= b:
+                for code in range(ord(a), ord(b) + 1):
+                    out.append(chr(code))
+            else:
+                out.extend((a, "-", b))
+            i += 3
+        else:
+            out.append(s[i])
+            i += 1
+    return out
+
+delete = False
+sets = []
+for arg in sys.argv[1:]:
+    if arg == "-d":
+        delete = True
+    elif arg.startswith("-"):
+        sys.stderr.write("tr shim: unsupported %s\n" % arg)
+        sys.exit(1)
+    else:
+        sets.append(arg)
+
+text = sys.stdin.read()
+if delete:
+    if not sets:
+        sys.stderr.write("tr shim: missing set\n")
+        sys.exit(1)
+    drop = set(expand(sets[0]))
+    text = "".join(ch for ch in text if ch not in drop)
+else:
+    if len(sets) < 2:
+        sys.stderr.write("tr shim: missing set\n")
+        sys.exit(1)
+    src = expand(sets[0])
+    dst = expand(sets[1])
+    if not dst:
+        sys.stderr.write("tr shim: empty set2\n")
+        sys.exit(1)
+    if len(dst) < len(src):
+        dst = dst + [dst[-1]] * (len(src) - len(dst))
+    table = {}
+    for idx, ch in enumerate(src):
+        table[ch] = dst[idx]
+    text = "".join(table.get(ch, ch) for ch in text)
+sys.stdout.write(text)
+EOF
+	chmod +x "$BIN/tr"
 }
 
 write_status() {
@@ -327,6 +397,41 @@ unit_parse_body() {
 	printf '%s\n' "$keys" | grep -qx token
 }
 
+unit_hex_body() {
+	sample=ba536bba798b3acb44c178cb0712cb40cf7fc466444e836d42df9b7cdb02434a
+	upper=$(printf '%s' "$sample" | awk '{ print toupper($0) }')
+	got=$(printf ' \t%s \r' "$upper" | normalize_hex)
+	[ "$got" = "$sample" ]
+}
+
+unit_cfg_body() {
+	d=$(mktemp -d)
+	cat >"$d/before" <<'EOF'
+config ladder-agent 'main'
+	option enabled '1'
+	option token 'secret-token'
+EOF
+	cat >"$d/added" <<'EOF'
+config ladder-agent 'main'
+	option egress_interface ''
+	option enabled '1'
+	option token 'secret-token'
+EOF
+	cat >"$d/clobber" <<'EOF'
+config ladder-agent 'main'
+	option enabled '1'
+	option token 'clobbered'
+EOF
+	uci_assignments "$d/before" | sort >"$d/before.lines"
+	uci_assignments "$d/added" | sort >"$d/added.lines"
+	uci_assignments "$d/clobber" | sort >"$d/clobber.lines"
+	if config_values_changed "$d/before.lines" "$d/added.lines"; then
+		exit 1
+	fi
+	config_values_changed "$d/before.lines" "$d/clobber.lines"
+	rm -rf "$d"
+}
+
 # --- integration ---
 
 check() {
@@ -357,9 +462,29 @@ launch() {
 	fi
 }
 
+assert_classless_tr() {
+	shell_bin=$1
+	sample=ba536bba798b3acb44c178cb0712cb40cf7fc466444e836d42df9b7cdb02434a
+	got=$(printf '%s' "$sample" | "$BIN/tr" -d '[:space:]')
+	want=b536bb798b3b44178b0712b40f7f466444836d42df9b7db02434
+	if [ "$got" = "$want" ]; then
+		ok "classless tr deletes a/c/e ($shell_bin)"
+	else
+		printf '  got [%s]\n' "$got" >&2
+		bad "classless tr deletes a/c/e ($shell_bin)"
+	fi
+	folded=$(printf '%s' 'ABCDEF' | "$BIN/tr" 'A-F' 'a-f')
+	if [ "$folded" = "abcdef" ]; then
+		ok "classless tr still folds A-F ($shell_bin)"
+	else
+		bad "classless tr still folds A-F ($shell_bin)"
+	fi
+}
+
 integration_cases() {
 	shell_bin=$1
 	setup
+	assert_classless_tr "$shell_bin"
 	printf '%s\n' "arch all 1" "arch noarch 1" "arch aarch64_cortex-a55_neon-vfpv4 10" >"$STATE/arch"
 	write_status ladder-agent 0.15.12-2
 	RUN_PATH="$BIN:/usr/bin:/bin"
@@ -368,9 +493,9 @@ integration_cases() {
 	out=$base/out
 
 	if MOCK_WRITE_OPKG=1 launch >"$out"; then
-		ok "upgrade a55 ($shell_bin)"
+		ok "upgrade a55 under classless tr ($shell_bin)"
 	else
-		bad "upgrade a55 ($shell_bin)"
+		bad "upgrade a55 under classless tr ($shell_bin)"
 		cat "$out" >&2 || true
 		return
 	fi
@@ -463,6 +588,24 @@ integration_cases() {
 	fi
 	check "pidof fallback" grep -q '4242' "$out"
 
+	cp "$base/user-config.before" "$ROOT/etc/config/ladder-agent"
+	if MOCK_ADD_OPTION=1 launch --force >"$out" 2>"$base/err"; then
+		ok "added option keeps old values ($shell_bin)"
+	else
+		bad "added option keeps old values ($shell_bin)"
+	fi
+	check "new option does not warn" test ! -s "$base/err"
+	check "token still secret after add" grep -q "secret-token" "$ROOT/etc/config/ladder-agent"
+
+	cp "$base/user-config.before" "$ROOT/etc/config/ladder-agent"
+	: >"$base/err"
+	if MOCK_CLOBBER_CONFIG=1 launch --force >"$out" 2>"$base/err"; then
+		ok "clobber run ($shell_bin)"
+	else
+		bad "clobber run ($shell_bin)"
+	fi
+	check "changed value warns" grep -q '已有选项的值变了' "$base/err"
+
 	rm -rf "$base"
 }
 
@@ -504,6 +647,16 @@ if unit unit_parse_body; then
 	ok "awk release parse, index, uci keys"
 else
 	bad "awk release parse, index, uci keys"
+fi
+if unit unit_hex_body; then
+	ok "normalize hex without tr classes"
+else
+	bad "normalize hex without tr classes"
+fi
+if unit unit_cfg_body; then
+	ok "config value compare ignores new options"
+else
+	bad "config value compare ignores new options"
 fi
 rm -rf "$base"
 
