@@ -103,10 +103,18 @@ jobs:
 
           \`.github/workflows/bump-upstream.yml\` 每天（以及手动 \`workflow_dispatch\`）读取 \`LadderAirport/LadderAirport\` 的最新 GitHub Release。submodule 已经是该 tag，或者比该 tag 更新时，不会降级。否则开此 PR。
 
-          若仓库配置了 secret \`UPSTREAM_BUMP_TOKEN\`（contents 与 pull requests 写权限），用它推分支，\`pull_request\` 会照常跑 CI。未配置时使用默认 \`GITHUB_TOKEN\`；该 token 打开的 PR 不会再触发其它 workflow，因此这里会额外 \`workflow_dispatch\` 一次 \`ci.yml\`。
+          若仓库配置了 secret \`UPSTREAM_BUMP_TOKEN\`（contents 与 pull requests 写权限），用它推分支并开 PR，\`pull_request\` 会照常跑 CI。未配置时使用默认 \`GITHUB_TOKEN\`。仓库若禁止 Actions 创建 PR，\`gh pr create\` 会失败；分支仍已推送，本工作流继续 \`workflow_dispatch\` 一次 \`ci.yml\`。要让 Track upstream 自己开 PR，需要设置该 secret，而不是改仓库设置。
           EOF
           sed -i 's/^          //' "$RUNNER_TEMP/pr-body.md"
-          gh pr create --base main --head "$branch" --title "chore: bump LadderAirport to ${TAG}" --body-file "$RUNNER_TEMP/pr-body.md"
+          if ! gh pr create --base main --head "$branch" --title "chore: bump LadderAirport to ${TAG}" --body-file "$RUNNER_TEMP/pr-body.md"; then
+            echo "gh pr create failed." >&2
+            if [ "$HAS_PAT" = "true" ]; then
+              echo "UPSTREAM_BUMP_TOKEN is set but could not open the pull request." >&2
+              exit 1
+            fi
+            echo "Default GITHUB_TOKEN cannot open pull requests in this repo." >&2
+            echo "Set secret UPSTREAM_BUMP_TOKEN (contents: write, pull-requests: write) so Track upstream can open PRs. CI will still be dispatched on the pushed branch." >&2
+          fi
 
           if [ "$HAS_PAT" != "true" ]; then
             # The ref can take a moment to be visible to workflow_dispatch.
