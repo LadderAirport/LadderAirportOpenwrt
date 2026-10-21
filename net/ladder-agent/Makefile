@@ -6,7 +6,7 @@ include $(TOPDIR)/rules.mk
 PKG_NAME:=ladder-agent
 # Feed repack counter only. client_version is $(PKG_VERSION)-r$(PKG_RELEASE),
 # for example 0.15.12-r2. It is not part of the core version.
-PKG_RELEASE:=2
+PKG_RELEASE:=3
 
 # Main monorepo is a git submodule at <feed>/LadderAirport (see .gitmodules).
 LADDER_SRC ?= $(shell \
