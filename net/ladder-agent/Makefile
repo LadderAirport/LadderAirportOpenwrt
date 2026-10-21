@@ -103,10 +103,18 @@ define Build/Prepare
 endef
 
 define Build/Compile
-	# GO_PKG_VARS (OpenWrt golang-package.mk) sets GOTOOLCHAIN=local and
-	# CGO_ENABLED=1. Same-command assignments are last-wins, so the package
-	# overrides must follow GO_PKG_VARS. auto lets the SDK Go 1.23 fetch the
-	# toolchain required by agent/go.mod (go 1.26.4).
+	# The SDK host Go cannot compile this tree. OpenWrt 24.10 ships Go 1.23
+	# and sets GOTOOLCHAIN=local, so it refuses agent/go.mod (go 1.26.4)
+	# instead of downloading a newer toolchain. 19.07-era SDKs ship a Go
+	# that predates GOTOOLCHAIN entirely. ensure-host-go.sh selects a host
+	# Go that is already new enough, or downloads that exact official
+	# toolchain (SHA-256 checked) and prints its binary and GOROOT.
+	#
+	# GO_PKG_VARS still supplies GOOS/GOARCH/GOARM/GOMIPS and the module
+	# cache. Assignments after it win: CGO stays off so the binary is
+	# static on 19.07, and GOROOT/GOTOOLCHAIN point at the selected Go.
+	# Linux does not pass -checklinkname=0. That flag is for GOOS=android,
+	# where github.com/wlynxg/anet linknames net.zoneCache.
 	#
 	# Four dollar signs. This define is expanded once while the stamp
 	# recipe is generated, then again when Make runs the recipe. Two
@@ -114,7 +122,12 @@ define Build/Compile
 	# reads as variable V, so VERSION_LDFLAGS becomes sERSION_LDFLAGS
 	# and the git command substitution is dropped.
 	( \
+		set -eu; \
 		SINGBOX_VER=$$$$(git -C "$(PKG_BUILD_DIR)/agent/sing-box" describe --tags 2>/dev/null | sed 's/^v//' || echo unknown); \
+		LADDER_GO_LINE=$$$$(sh $(LADDER_PKG_DIR)/scripts/ensure-host-go.sh "$(PKG_BUILD_DIR)/agent/go.mod" "$(if $(DL_DIR),$(DL_DIR),$(PKG_BUILD_DIR))/ladder-go"); \
+		LADDER_GO="$$$${LADDER_GO_LINE%% *}"; \
+		LADDER_GOROOT="$$$${LADDER_GO_LINE#* }"; \
+		[ -n "$$$$LADDER_GO" ] && [ -x "$$$$LADDER_GO" ]; \
 		VERSION_LDFLAGS="-X 'github.com/ladderairport/agent/internal/version.Version=$(LADDER_CORE_VERSION)'"; \
 		VERSION_LDFLAGS="$$$$VERSION_LDFLAGS -X 'github.com/ladderairport/agent/internal/version.Commit=$(LADDER_CORE_COMMIT)'"; \
 		VERSION_LDFLAGS="$$$$VERSION_LDFLAGS -X 'github.com/ladderairport/agent/internal/version.ClientType=$(LADDER_CLIENT_TYPE)'"; \
@@ -122,8 +135,10 @@ define Build/Compile
 		VERSION_LDFLAGS="$$$$VERSION_LDFLAGS -X 'github.com/sagernet/sing-box/constant.Version=$$$$SINGBOX_VER'"; \
 		cd $(PKG_BUILD_DIR)/agent && \
 		$(GO_PKG_VARS) \
-		CGO_ENABLED=0 GOTOOLCHAIN=auto \
-		go build -trimpath \
+		GOROOT="$$$$LADDER_GOROOT" \
+		GOTOOLCHAIN=local \
+		CGO_ENABLED=0 \
+		"$$$$LADDER_GO" build -trimpath \
 			-tags "$(AGENT_TAGS)" \
 			-ldflags "-s -w $$$$VERSION_LDFLAGS" \
 			-o $(PKG_BUILD_DIR)/ladder-agent \
