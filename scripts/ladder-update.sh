@@ -151,6 +151,14 @@ file_sha256() {
 	die "需要 sha256sum 或 openssl 才能校验 ipk"
 }
 
+# OpenWrt BusyBox is often built without FEATURE_TR_CLASSES. In that build,
+# `tr -d '[:space:]'` deletes the literal characters in "[ :space:]" — including
+# a, c, and e — and corrupts a hex digest. Fold case and drop whitespace here
+# instead of calling tr.
+normalize_hex() {
+	awk '{ gsub(/[ \t\r]/, ""); print tolower($0) }'
+}
+
 index_field() {
 	pkg=$1
 	field=$2
@@ -335,8 +343,8 @@ install_pkg() {
 	esac
 	ipk=$(dirname "$packages_file")/$fn
 	[ -f "$ipk" ] || die "找不到 ${ipk}"
-	got=$(file_sha256 "$ipk" | tr 'A-F' 'a-f')
-	want=$(printf '%s' "$sum" | tr 'A-F' 'a-f' | tr -d '[:space:]')
+	got=$(file_sha256 "$ipk" | normalize_hex)
+	want=$(printf '%s\n' "$sum" | normalize_hex)
 	if [ "$got" != "$want" ]; then
 		die "${fn} 的 SHA256 与 Packages 索引不符"
 	fi
