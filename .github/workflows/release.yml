@@ -101,6 +101,9 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     steps:
+      - name: Checkout feed
+        uses: actions/checkout@v4
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -121,14 +124,16 @@ jobs:
           find . -type f | sort > ../MANIFEST.txt
           tar -czf ../ladderairport-openwrt-feed.tar.gz .
           cd ..
-          sha256sum ladderairport-openwrt-feed.tar.gz MANIFEST.txt > SHA256SUMS.txt
           mkdir -p per-arch
           for archdir in dist/*; do
             [ -d "$archdir" ] || continue
             arch="$(basename "$archdir")"
             tar -czf "per-arch/${arch}.tar.gz" -C "dist/${arch}" .
           done
-          ls -la dist per-arch ladderairport-openwrt-feed.tar.gz
+          cp scripts/ladder-update.sh ladder-update.sh
+          chmod +x ladder-update.sh
+          sha256sum ladderairport-openwrt-feed.tar.gz MANIFEST.txt per-arch/*.tar.gz ladder-update.sh > SHA256SUMS.txt
+          ls -la dist per-arch ladderairport-openwrt-feed.tar.gz ladder-update.sh
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -139,5 +144,6 @@ jobs:
             SHA256SUMS.txt
             MANIFEST.txt
             per-arch/*.tar.gz
+            ladder-update.sh
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
