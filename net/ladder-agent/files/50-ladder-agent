@@ -1,0 +1,3 @@
+#!/bin/sh
+# Sourced by default_postinst and again on first boot. Do not exit.
+/usr/libexec/ladder-agent/ensure-config

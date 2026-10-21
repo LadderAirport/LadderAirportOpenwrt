@@ -199,6 +199,12 @@ STATUS
 	if [ "\$pkg" = ladder-agent ] && [ "\${MOCK_WRITE_OPKG:-}" = 1 ]; then
 		cp "$base/opkg-config" "$ROOT/etc/config/ladder-agent-opkg"
 	fi
+	if [ "\$pkg" = ladder-agent ] && [ "\${MOCK_CLOBBER_CONFIG:-}" = 1 ]; then
+		printf '%s\n' "config ladder-agent 'main'" "	option token 'clobbered'" >"$ROOT/etc/config/ladder-agent"
+	fi
+	if [ "\$pkg" = ladder-agent ] && [ "\${MOCK_ADD_OPTION:-}" = 1 ]; then
+		printf '%s\n' "	option egress_interface ''" >>"$ROOT/etc/config/ladder-agent"
+	fi
 	;;
 *)
 	echo "bad opkg \$cmd" >&2
@@ -398,6 +404,34 @@ unit_hex_body() {
 	[ "$got" = "$sample" ]
 }
 
+unit_cfg_body() {
+	d=$(mktemp -d)
+	cat >"$d/before" <<'EOF'
+config ladder-agent 'main'
+	option enabled '1'
+	option token 'secret-token'
+EOF
+	cat >"$d/added" <<'EOF'
+config ladder-agent 'main'
+	option egress_interface ''
+	option enabled '1'
+	option token 'secret-token'
+EOF
+	cat >"$d/clobber" <<'EOF'
+config ladder-agent 'main'
+	option enabled '1'
+	option token 'clobbered'
+EOF
+	uci_assignments "$d/before" | sort >"$d/before.lines"
+	uci_assignments "$d/added" | sort >"$d/added.lines"
+	uci_assignments "$d/clobber" | sort >"$d/clobber.lines"
+	if config_values_changed "$d/before.lines" "$d/added.lines"; then
+		exit 1
+	fi
+	config_values_changed "$d/before.lines" "$d/clobber.lines"
+	rm -rf "$d"
+}
+
 # --- integration ---
 
 check() {
@@ -554,6 +588,24 @@ integration_cases() {
 	fi
 	check "pidof fallback" grep -q '4242' "$out"
 
+	cp "$base/user-config.before" "$ROOT/etc/config/ladder-agent"
+	if MOCK_ADD_OPTION=1 launch --force >"$out" 2>"$base/err"; then
+		ok "added option keeps old values ($shell_bin)"
+	else
+		bad "added option keeps old values ($shell_bin)"
+	fi
+	check "new option does not warn" test ! -s "$base/err"
+	check "token still secret after add" grep -q "secret-token" "$ROOT/etc/config/ladder-agent"
+
+	cp "$base/user-config.before" "$ROOT/etc/config/ladder-agent"
+	: >"$base/err"
+	if MOCK_CLOBBER_CONFIG=1 launch --force >"$out" 2>"$base/err"; then
+		ok "clobber run ($shell_bin)"
+	else
+		bad "clobber run ($shell_bin)"
+	fi
+	check "changed value warns" grep -q '已有选项的值变了' "$base/err"
+
 	rm -rf "$base"
 }
 
@@ -600,6 +652,11 @@ if unit unit_hex_body; then
 	ok "normalize hex without tr classes"
 else
 	bad "normalize hex without tr classes"
+fi
+if unit unit_cfg_body; then
+	ok "config value compare ignores new options"
+else
+	bad "config value compare ignores new options"
 fi
 rm -rf "$base"
 

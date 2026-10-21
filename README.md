@@ -52,7 +52,7 @@ opkg install ladder-agent luci-app-ladder-agent
 
 ### 一条命令升级
 
-路由器上已经有（或准备安装）`ladder-agent` 和 `luci-app-ladder-agent` 时，用 Release 里的 `ladder-update.sh`。它是 POSIX sh，OpenWrt 19.07 的 BusyBox ash 就能跑。脚本按 `opkg print-architecture` 选择架构包（例如 `aarch64_cortex-a55` / `cortex-a72` 会用 `aarch64_cortex-a53`），把每个 ipk 的 SHA256 和该架构 `Packages` 索引核对后再安装，先装 `ladder-agent`，再装 `luci-app-ladder-agent`。已有的 `/etc/config/ladder-agent` 不会被覆盖；opkg 另存的 `ladder-agent-opkg` 里多出来的选项名会列出来。
+路由器上已经有（或准备安装）`ladder-agent` 和 `luci-app-ladder-agent` 时，用 Release 里的 `ladder-update.sh`。它是 POSIX sh，OpenWrt 19.07 的 BusyBox ash 就能跑。脚本按 `opkg print-architecture` 选择架构包（例如 `aarch64_cortex-a55` / `cortex-a72` 会用 `aarch64_cortex-a53`），把每个 ipk 的 SHA256 和该架构 `Packages` 索引核对后再安装，先装 `ladder-agent`，再装 `luci-app-ladder-agent`。已有的 `/etc/config/ladder-agent` 不会被覆盖。0.16.0-r4 起，包不再把这份配置打成 conffile，安装时只补缺失选项，不改已有的值。0.16.0-r3 及更早留下的 `ladder-agent-opkg` 里多出来的选项名仍会列出来。
 
 ```sh
 curl -fsSL https://github.com/LadderAirport/LadderAirportOpenwrt/releases/latest/download/ladder-update.sh | sh
