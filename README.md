@@ -50,6 +50,29 @@ opkg install ladder-agent luci-app-ladder-agent
 
 未签名软件源时，按 OpenWrt 文档允许未校验安装（生产环境建议配置 `KEY_BUILD` 签名，见下方 CI）。
 
+### 一条命令升级
+
+路由器上已经有（或准备安装）`ladder-agent` 和 `luci-app-ladder-agent` 时，用 Release 里的 `ladder-update.sh`。它是 POSIX sh，OpenWrt 19.07 的 BusyBox ash 就能跑。脚本按 `opkg print-architecture` 选择架构包（例如 `aarch64_cortex-a55` / `cortex-a72` 会用 `aarch64_cortex-a53`），把每个 ipk 的 SHA256 和该架构 `Packages` 索引核对后再安装，先装 `ladder-agent`，再装 `luci-app-ladder-agent`。已有的 `/etc/config/ladder-agent` 不会被覆盖；opkg 另存的 `ladder-agent-opkg` 里多出来的选项名会列出来。
+
+```sh
+curl -fsSL https://github.com/LadderAirport/LadderAirportOpenwrt/releases/latest/download/ladder-update.sh | sh
+```
+
+路由器基础系统常常还没有 `curl`，可以用 `wget`（19.07 上一般是 `uclient-fetch`）：
+
+```sh
+wget -O - https://github.com/LadderAirport/LadderAirportOpenwrt/releases/latest/download/ladder-update.sh | sh
+```
+
+指定版本或架构：`sh -s -- v0.16.0-2`，或 `sh -s -- --arch aarch64_cortex-a53`。版本已经相同就跳过，要重装加 `--force`。看完新选项后删掉 `ladder-agent-opkg` 加 `--drop-opkg`。
+
+访问不了 GitHub 时，把镜像前缀导出后再拉脚本（前缀会同时用在 API 和安装包下载上）：
+
+```sh
+export LADDER_GH_PREFIX=https://ghfast.top/
+curl -fsSL "${LADDER_GH_PREFIX}https://github.com/LadderAirport/LadderAirportOpenwrt/releases/latest/download/ladder-update.sh" | sh
+```
+
 ## LuCI
 
 包 `luci-app-ladder-agent`（依赖 `ladder-agent` + `luci-base`）：
@@ -102,7 +125,7 @@ uci commit ladder-agent
 
 日志：`logread -e ladder-agent` 或 `logread -f`。
 
-首期不包含 systemd 式远程升级助手与 BBR helper；升级请用 `opkg` 更新本 feed 中的包。
+升级已安装的节点可以用上面的 `ladder-update.sh`，或继续用 `opkg` 更新本 feed 中的包。本仓库不附带 BBR helper。
 
 ## 本地 / 固件集成
 
@@ -138,7 +161,7 @@ ipk 外壳版本和二进制里的核心版本分开注入，不再把去掉 `v`
 - **源码**：checkout 本仓后 `git submodule update --init LadderAirport`，再 init `agent/frp`、`agent/sing-box`
 - **包名 / feed 名**：`ladder-agent`、`luci-app-ladder-agent` / `ladderairport`
 - **架构**：`aarch64_cortex-a53`、`aarch64_generic`、`arm_cortex-a7`、`arm_cortex-a9`、`mipsel_24kc` 与 `x86_64`，`fail-fast: false`，并发上限 8
-- **触发**：push/PR → CI artifacts；推送 `v*` tag → 聚合 feed 并发布 GitHub Release
+- **触发**：push/PR → CI artifacts；推送 `v*` tag → 聚合 feed 并发布 GitHub Release（feed 归档、各架构 `*.tar.gz`、`SHA256SUMS.txt`、`MANIFEST.txt`、`ladder-update.sh`）。`SHA256SUMS.txt` 含 feed 归档和每个架构包
 - **上游跟踪**：[`bump-upstream.yml`](.github/workflows/bump-upstream.yml) 每天读取 [LadderAirport](https://github.com/LadderAirport/LadderAirport) 最新 Release。submodule 未到该 tag、且不是比该 tag 更新的提交时，自动开 bump PR。可选 secret `UPSTREAM_BUMP_TOKEN` 让这个 PR 直接触发 CI；未配置时工作流用默认 token 开 PR，并再 `workflow_dispatch` 一次 `ci.yml`（默认 token 创建的 PR 不会触发其它 workflow）
 - **签名（可选）**：仓库 secret `KEY_BUILD`（usign）
 
@@ -165,6 +188,7 @@ luci-app-ladder-agent/         # LuCI 配置 + 状态
   root/usr/share/rpcd/acl.d/
   root/usr/lib/lua/luci/       # 仅 19.07（没有 menu.d 时）使用
   root/usr/libexec/ladder-agent/luci-status.sh
+scripts/ladder-update.sh       # 路由器上一键安装 / 升级
 .github/workflows/
   ci.yml
   release.yml
